@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SolarWatch IoT Dashboard</title>
+  <meta name="description" content="Real-time IoT Solar Panel Monitoring - ESP32 via Firebase" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+    rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    * {
+      box-sizing: border-box
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: #0a0f1a;
+      color: #e2e8f0;
+      min-height: 100vh
+    }
+
+    .glass {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      backdrop-filter: blur(16px);
+      border-radius: 16px;
+      transition: transform .25s, box-shadow .25s, border-color .25s
+    }
+
+    .glass:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, .4);
+      border-color: rgba(251, 191, 36, .25)
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 600
+    }
+
+    .badge-green {
+      background: rgba(34, 197, 94, .15);
+      color: #4ade80;
+      border: 1px solid rgba(34, 197, 94, .3)
+    }
+
+    .badge-yellow {
+      background: rgba(234, 179, 8, .15);
+      color: #facc15;
+      border: 1px solid rgba(234, 179, 8, .3)
+    }
+
+    .badge-red {
+      background: rgba(239, 68, 68, .15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, .3)
+    }
+
+    .pbar {
+      height: 8px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .08);
+      overflow: hidden
+    }
+
+    .pfill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width .7s ease, background .5s ease
+    }
+
+    .live-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #4ade80;
+      box-shadow: 0 0 8px #4ade80;
+      animation: pulse 1.8s ease-in-out infinite
+    }
+
+    .spinner {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      border: 3px solid rgba(251, 191, 36, .2);
+      border-top-color: #fbbf24;
+      animation: spin .8s linear infinite
+    }
+
+    @keyframes spin {
+      to {
+        transform: rotate(360deg)
+      }
+    }
+
+    @keyframes slideUp {
+      from {
+        transform: translateY(16px);
+        opacity: 0
+      }
+
+      to {
+        transform: translateY(0);
+        opacity: 1
+      }
+    }
+
+    .alert-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      margin-bottom: 8px;
+      font-size: .84rem;
+      animation: slideUp .4s ease-out
+    }
+
+    .alert-row.warn {
+      background: rgba(234, 179, 8, .1);
+      border-left: 3px solid #facc15
+    }
+
+    .alert-row.crit {
+      background: rgba(239, 68, 68, .1);
+      border-left: 3px solid #f87171
+    }
+
+    .alert-row.info {
+      background: rgba(34, 197, 94, .08);
+      border-left: 3px solid #4ade80
+    }
+
+    .chart-box {
+      position: relative;
+      height: 200px
+    }
+
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(10, 15, 26, .94);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      transition: opacity .5s
+    }
+
+    #overlay.hidden {
+      opacity: 0;
+      pointer-events: none
+    }
+
+    .gauge-ring {
+      transform: rotate(-90deg)
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Loading overlay -->
+  <div id="overlay">
+    <div style="text-align:center;display:flex;flex-direction:column;align-items:center;gap:16px">
+      <div class="spinner"></div>
+      <div>
+        <p style="color:#fbbf24;font-weight:600;font-size:1.1rem">Connecting to Firebase…</p>
+        <p style="color:#64748b;font-size:.85rem;margin-top:4px">Establishing real-time link</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Background blobs -->
+  <div style="position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:0">
+    <div
+      style="position:absolute;top:-8rem;left:-8rem;width:24rem;height:24rem;border-radius:50%;background:rgba(245,158,11,.05);filter:blur(60px)">
+    </div>
+    <div
+      style="position:absolute;top:33%;right:-8rem;width:20rem;height:20rem;border-radius:50%;background:rgba(59,130,246,.05);filter:blur(60px)">
+    </div>
+  </div>
+
+  <!-- Header -->
+  <header
+    style="position:sticky;top:0;z-index:50;background:rgba(10,15,26,.9);backdrop-filter:blur(20px);border-bottom:1px solid rgba(255,255,255,.06)">
+    <div
+      style="max-width:1600px;margin:0 auto;padding:0 20px;height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div
+          style="width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg,#fbbf24,#d97706);display:flex;align-items:center;justify-content:center;font-size:1.1rem;box-shadow:0 4px 14px rgba(251,191,36,.3)">
+          ☀️</div>
+        <div>
+          <div style="font-weight:800;color:#fff;line-height:1;font-size:1rem">IOT SOLAR</div>
+          <div style="font-size:.72rem;color:#64748b;margin-top:2px">IoT Monitoring Dashboard</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="display:flex;align-items:center;gap:6px;font-size:.75rem;color:#64748b">
+          <div class="live-dot"></div><span>LIVE</span>
+        </div>
+        <div
+          style="background:rgba(255,255,255,.05);border-radius:8px;padding:6px 12px;font-size:.75rem;color:#94a3b8;display:none"
+          id="ts-box">
+          Last: <span id="last-update" style="font-family:'JetBrains Mono',monospace;color:#fcd34d">—</span>
+        </div>
+        <span id="conn-badge" class="badge badge-yellow">⚡ Connecting</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main style="max-width:1600px;margin:0 auto;padding:24px 20px;position:relative;z-index:1">
+
+    <!-- Metric Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:16px;margin-bottom:20px">
+
+      <!-- Voltage -->
+      <div class="glass" style="padding:20px" id="card-voltage">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span
+            style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Voltage</span>
+          <div
+            style="width:32px;height:32px;border-radius:8px;background:rgba(59,130,246,.15);display:flex;align-items:center;justify-content:center">
+            ⚡</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span id="val-voltage"
+            style="font-size:2rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#60a5fa">—</span>
+          <span style="color:#475569;font-size:.85rem;margin-left:4px">V</span>
+        </div>
+        <div class="pbar">
+          <div id="bar-voltage" class="pfill" style="background:#60a5fa;width:0%"></div>
+        </div>
+        <span id="st-voltage" class="badge badge-yellow" style="margin-top:10px">Waiting…</span>
+      </div>
+
+      <!-- Current -->
+      <div class="glass" style="padding:20px" id="card-current">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span
+            style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Current</span>
+          <div
+            style="width:32px;height:32px;border-radius:8px;background:rgba(168,85,247,.15);display:flex;align-items:center;justify-content:center">
+            🔋</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span id="val-current"
+            style="font-size:2rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#c084fc">—</span>
+          <span style="color:#475569;font-size:.85rem;margin-left:4px">A</span>
+        </div>
+        <div class="pbar">
+          <div id="bar-current" class="pfill" style="background:#c084fc;width:0%"></div>
+        </div>
+        <span id="st-current" class="badge badge-yellow" style="margin-top:10px">Waiting…</span>
+      </div>
+
+      <!-- Power -->
+      <div class="glass" style="padding:20px" id="card-power">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span
+            style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Power</span>
+          <div
+            style="width:32px;height:32px;border-radius:8px;background:rgba(245,158,11,.15);display:flex;align-items:center;justify-content:center">
+            🌟</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span id="val-power"
+            style="font-size:2rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#fbbf24">—</span>
+          <span style="color:#475569;font-size:.85rem;margin-left:4px">W</span>
+        </div>
+        <div class="pbar">
+          <div id="bar-power" class="pfill" style="background:#fbbf24;width:0%"></div>
+        </div>
+        <span id="st-power" class="badge badge-yellow" style="margin-top:10px">Waiting…</span>
+      </div>
+
+      <!-- Temperature -->
+      <div class="glass" style="padding:20px" id="card-temp">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span
+            style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Temperature</span>
+          <div
+            style="width:32px;height:32px;border-radius:8px;background:rgba(239,68,68,.15);display:flex;align-items:center;justify-content:center">
+            🌡️</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span id="val-temp"
+            style="font-size:2rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#f87171">—</span>
+          <span style="color:#475569;font-size:.85rem;margin-left:4px">°C</span>
+        </div>
+        <div class="pbar">
+          <div id="bar-temp" class="pfill" style="background:#f87171;width:0%"></div>
+        </div>
+        <span id="st-temp" class="badge badge-yellow" style="margin-top:10px">Waiting…</span>
+      </div>
+
+      <!-- Humidity -->
+      <div class="glass" style="padding:20px" id="card-hum">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span
+            style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Humidity</span>
+          <div
+            style="width:32px;height:32px;border-radius:8px;background:rgba(6,182,212,.15);display:flex;align-items:center;justify-content:center">
+            💧</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span id="val-hum"
+            style="font-size:2rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#22d3ee">—</span>
+          <span style="color:#475569;font-size:.85rem;margin-left:4px">%</span>
+        </div>
+        <div class="pbar">
+          <div id="bar-hum" class="pfill" style="background:#22d3ee;width:0%"></div>
+        </div>
+        <span id="st-hum" class="badge badge-yellow" style="margin-top:10px">Waiting…</span>
+      </div>
+
+      <!-- Light -->
+      <div class="glass" style="padding:20px" id="card-light">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <span
+            style="font-size:.72rem;font-weight:600;color:#64748b;text-transform:uppercase;letter-spacing:.06em">Light</span>
+          <div
+            style="width:32px;height:32px;border-radius:8px;background:rgba(234,179,8,.15);display:flex;align-items:center;justify-content:center">
+            ☀️</div>
+        </div>
+        <div style="margin-bottom:10px">
+          <span id="val-light"
+            style="font-size:2rem;font-weight:700;font-family:'JetBrains Mono',monospace;color:#facc15">—</span>
+          <span style="color:#475569;font-size:.85rem;margin-left:4px">lux</span>
+        </div>
+        <div class="pbar">
+          <div id="bar-light" class="pfill" style="background:#facc15;width:0%"></div>
+        </div>
+        <span id="st-light" class="badge badge-yellow" style="margin-top:10px">Waiting…</span>
+      </div>
+    </div>
+
+    <!-- Status Row -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px">
+
+      <!-- Panel Status -->
+      <div class="glass" style="padding:20px">
+        <h2
+          style="font-size:.8rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:14px">
+          🧹 Panel Status</h2>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div
+            style="display:flex;align-items:center;justify-content:space-between;padding:12px;border-radius:12px;background:rgba(255,255,255,.04)">
+            <div>
+              <p style="font-size:.72rem;color:#64748b;margin-bottom:5px">Dust Status</p>
+              <span id="st-dust" class="badge badge-green">✅ Clean</span>
+            </div>
+            <span id="icon-dust" style="font-size:1.8rem">🌿</span>
+          </div>
+          <div
+            style="display:flex;align-items:center;justify-content:space-between;padding:12px;border-radius:12px;background:rgba(255,255,255,.04)">
+            <div>
+              <p style="font-size:.72rem;color:#64748b;margin-bottom:5px">Obstacle Detection</p>
+              <span id="st-obstacle" class="badge badge-green">🛣️ Clear</span>
+            </div>
+            <span id="icon-obstacle" style="font-size:1.8rem">✅</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Efficiency Gauge -->
+      <div class="glass" style="padding:20px;display:flex;flex-direction:column;align-items:center">
+        <h2
+          style="font-size:.8rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;align-self:flex-start;width:100%">
+          ⚙️ System Efficiency</h2>
+        <div style="position:relative;width:160px;height:160px">
+          <svg class="gauge-ring" width="160" height="160" viewBox="0 0 160 160">
+            <circle cx="80" cy="80" r="65" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="12" />
+            <circle id="eff-arc" cx="80" cy="80" r="65" fill="none" stroke="#4ade80" stroke-width="12"
+              stroke-linecap="round" stroke-dasharray="408.41" stroke-dashoffset="408.41"
+              style="transition:stroke-dashoffset 1s ease,stroke .5s ease" />
+          </svg>
+          <div
+            style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center">
+            <span id="val-eff"
+              style="font-size:2.2rem;font-weight:800;font-family:'JetBrains Mono',monospace;color:#fff">—</span>
+            <span style="font-size:.72rem;color:#64748b;margin-top:2px">% Eff.</span>
+          </div>
+        </div>
+        <span id="st-eff" class="badge badge-yellow" style="margin-top:12px">Waiting…</span>
+      </div>
+
+      <!-- Alerts -->
+      <div class="glass" style="padding:20px">
+        <h2
+          style="font-size:.8rem;font-weight:700;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between">
+          🔔 System Alerts
+          <span id="alert-count"
+            style="background:rgba(239,68,68,.2);color:#f87171;font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px">0</span>
+        </h2>
+        <div id="alerts-list" style="max-height:180px;overflow-y:auto">
+          <div class="alert-row info">
+            <span style="color:#4ade80">ℹ️</span>
+            <span style="color:#94a3b8">Dashboard started. Awaiting live data…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px;margin-bottom:20px">
+      <div class="glass" style="padding:20px">
+        <h2 style="font-size:.8rem;font-weight:600;color:#94a3b8;margin-bottom:14px">📈 Power vs Time</h2>
+        <div class="chart-box"><canvas id="ch-power"></canvas></div>
+      </div>
+      <div class="glass" style="padding:20px">
+        <h2 style="font-size:.8rem;font-weight:600;color:#94a3b8;margin-bottom:14px">📊 Voltage vs Time</h2>
+        <div class="chart-box"><canvas id="ch-voltage"></canvas></div>
+      </div>
+      <div class="glass" style="padding:20px">
+        <h2 style="font-size:.8rem;font-weight:600;color:#94a3b8;margin-bottom:14px">🌡️ Temperature vs Time</h2>
+        <div class="chart-box"><canvas id="ch-temp"></canvas></div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="glass"
+      style="padding:14px 20px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;font-size:.72rem;color:#475569">
+      <span>🛰️ Device: <strong style="color:#94a3b8">ESP32 + INA219 + DHT22 + LDR + IR</strong></span>
+      <span style="background:rgba(255,255,255,.06);width:1px;height:16px;display:inline-block"></span>
+      <span>🔥 DB: <strong style="color:#94a3b8">Firebase Realtime (asia-southeast1)</strong></span>
+      <span style="background:rgba(255,255,255,.06);width:1px;height:16px;display:inline-block"></span>
+      <span>📡 Path: <code style="color:#fcd34d;font-family:'JetBrains Mono',monospace">/data</code></span>
+      <span style="background:rgba(255,255,255,.06);width:1px;height:16px;display:inline-block"></span>
+      <span>🔄 Mode: <strong style="color:#94a3b8">onValue real-time listener</strong></span>
+      <span style="margin-left:auto">© 2025 SolarWatch IoT</span>
+    </div>
+
+  </main>
+
+  <script type="module" src="script.js"></script>
+</body>
+
+</html>
